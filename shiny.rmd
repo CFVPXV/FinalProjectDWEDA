@@ -1,0 +1,126 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# Input Form UI
+inputFormUI <- function(id) {
+  ns <- NS(id)
+  tagList(
+    numericInput(ns("port"), "Port for the Gateway Node", value = 5201),
+    textInput(ns("hostname"), "Hostname of the Bridge", value = "example.com"),
+    actionButton(ns("runTest"), "Run Test")
+  )
+}
+
+# Input Form Server
+inputForm <- function(input, output, session) {
+  return(reactive({
+    list(port = input$port, hostname = input$hostname, runTest = input$runTest)
+  }))
+}
+
+
+```
+
+```{r}
+# Table Module UI
+tableModuleUI <- function(id) {
+  ns <- NS(id)
+  dataTableOutput(ns("table"))
+}
+
+# Table Module Server
+tableModule <- function(input, output, session, data) {
+  output$table <- renderDataTable({
+    data()
+  }, options = list(pageLength = 5))
+}
+
+
+```
+
+```{r}
+# Plot Module UI
+plotModule <- function(input, output, session, data) {
+  output$plot <- renderPlot({
+    plot_data <- data()  # Get the reactive data
+
+    # Ensure data is not empty and contains finite values
+    req(nrow(plot_data) > 0)
+    req(sum(is.finite(plot_data$interval)) > 0)
+    req(sum(is.finite(plot_data$bandwidth)) > 0)
+
+    # Filtering only finite values for safety
+    finite_indices <- is.finite(plot_data$interval) & is.finite(plot_data$bandwidth)
+    plot_data <- plot_data[finite_indices, ]
+
+    # Proceed to plot
+    if (nrow(plot_data) > 0) {
+      plot(plot_data$interval, plot_data$bandwidth, type = 'b', main = "Bandwidth Over Time",
+           xlab = "Interval", ylab = "Bandwidth (Mbps)")
+    } else {
+      # Optional: Handle the case where there's no valid data to plot
+      plot(1, type = "n", xlab = "", ylab = "", xlim = c(0, 1), ylim = c(0, 1))
+      text(0.5, 0.5, "No data to display")
+    }
+  })
+}
+
+```
+
+```{r}
+library(shiny)
+library(DT)
+
+# Main UI
+ui <- fluidPage(
+  titlePanel("Network Performance Test Interface with Modular Design"),
+  sidebarLayout(
+    sidebarPanel(
+      inputFormUI("inputForm")
+    ),
+    mainPanel(
+      tableModuleUI("clientTable"),
+      tableModuleUI("serverTable"),
+      plotModuleUI("bandwidthPlot")
+    )
+  )
+)
+
+# Main Server
+server <- function(input, output, session) {
+  formData <- callModule(inputForm, "inputForm")
+  
+  # Initialize reactive values
+  dataValues <- reactiveValues(
+    clientData = data.frame(),
+    serverData = data.frame(),
+    bandwidthData = data.frame(interval = numeric(0), bandwidth = numeric(0))
+  )
+  
+  observeEvent(formData()$runTest, {
+    # Simulate updating data upon form submission
+    # Replace these with actual data fetching based on formData
+    dataValues$clientData <- data.frame(Interval = 1:5, Transfer = runif(5, 100, 200), Bandwidth = runif(5, 10, 100))
+    dataValues$serverData <- data.frame(Interval = 1:5, Transfer = runif(5, 100, 200), Bandwidth = runif(5, 10, 100))
+    dataValues$bandwidthData <- data.frame(interval = 1:5, bandwidth = runif(5, 10, 100))
+  })
+  
+  # Call modules with reactive data
+  callModule(tableModule, "clientTable", data = reactive({dataValues$clientData}))
+  callModule(tableModule, "serverTable", data = reactive({dataValues$serverData}))
+  callModule(plotModule, "bandwidthPlot", data = reactive({dataValues$bandwidthData}))
+}
+
+
+
+```
+
+```{r}
+shinyApp(ui = ui, server = server)
+```
+
+
+
