@@ -4,123 +4,391 @@ output: html_notebook
 ---
 
 ```{r}
-# Input Form UI
-inputFormUI <- function(id) {
+library(shiny)
+library(DT)
+library(tidyverse)
+library(stringr)
+library(shinythemes)
+library(rlang)
+```
+
+
+
+```{r}
+# Function to check if a line contains detailed data or is a summary/done line
+isDataLine <- function(line) {
+  # Pattern to match detailed data lines
+  detailPattern <- "\\[\\s*5\\]\\s+\\d+\\.\\d+-\\d+\\.\\d+\\s+sec"
+  # Pattern to match summary or "iperf Done." lines
+  excludePattern <- "- - - - -|sender|receiver|iperf Done."
+  
+  grepl(detailPattern, line) && !grepl(excludePattern, line)
+}
+
+```
+
+
+```{r}
+# Adjusted to convert values to KB
+convertToKB <- function(value, unit) {
+  multiplier <- switch(unit,
+                       "KBytes" = 1,      # Already in KB, so multiplier is 1
+                       "MBytes" = 1e3,    # 1 MB = 1000 KB
+                       "GBytes" = 1e6,    # 1 GB = 1,000,000 KB
+                       1)                 # Default case, assuming value is in Bytes
+  as.numeric(value) * multiplier
+}
+
+# Adjusted to convert values to Kbps
+convertToKbps <- function(value, unit) {
+  multiplier <- switch(unit,
+                       "Kbits/sec" = 1,   # Already in Kbps, so multiplier is 1
+                       "Mbits/sec" = 1e3, # 1 Mbps = 1000 Kbps
+                       "Gbits/sec" = 1e6, # 1 Gbps = 1,000,000 Kbps
+                       1)                 # Default case, assuming value is in bps
+  as.numeric(value) * multiplier
+}
+
+# Update the parseLine function to use the new convertToKB and convertToKbps functions
+parseLine <- function(line) {
+  if (isDataLine(line)) {
+    pattern <- "\\[\\s*5\\]\\s+(\\d+\\.\\d+)-(\\d+\\.\\d+)\\s+sec\\s+([\\d\\.]+)\\s+([KMG]?Bytes)\\s+([\\d\\.]+)\\s+([KMG]?bits/sec)\\s*(\\d*)\\s*(\\d+\\s+[KMG]?Bytes)?"
+    matches <- str_match(line, pattern)
+
+    if (!is.na(matches[1,1])) {
+      interval_start <- as.numeric(matches[1,2])
+      interval_end <- as.numeric(matches[1,3])
+      
+      # Use convertToKB for transfer size
+      transfer_KB <- convertToKB(matches[1,4], matches[1,5])
+      # Use convertToKbps for bitrate
+      bitrate_Kbps <- convertToKbps(matches[1,6], matches[1,7])
+
+      retrans <- if_else(matches[1,8] == "", NA_integer_, as.integer(matches[1,8]))
+      cwnd <- if_else(is.na(matches[1,9]), NA_character_, matches[1,9])
+      # Convert Congestion Window size to KB if not NA
+      cwnd_KB <- if(!is.na(cwnd)) convertToKB(as.numeric(str_extract(cwnd, "\\d+")), str_extract(cwnd, "[KMG]Bytes")) else NA_real_
+
+      tibble(
+        IntervalStart = interval_start,
+        IntervalEnd = interval_end,
+        "Transfer(KB)" = transfer_KB,
+        "Bitrate(Kbps)" = bitrate_Kbps,
+        Retr = retrans,
+        Cwnd = cwnd_KB
+      )
+    } else {
+      NULL  # Return NULL if the line does not match the pattern
+    }
+  } else {
+    NULL  # Return NULL if the line is not a detailed data line
+  }
+}
+
+
+```
+
+```{r}
+dataStorageModule <- function(input, output, session, data) {
+  # Create a reactive value to store the data
+  storedData <- reactiveVal()
+
+  observe({
+    # Update the stored data whenever 'data' changes
+    storedData(data())
+  })
+
+  # Return the stored data so it can be accessed from outside the module
+  return(storedData)
+}
+
+```
+
+```{r}
+fileUploadModule <- function(input, output, session, storedData) {
+  observeEvent(input$file1, {
+    req(input$file1)
+    inFile <- input$file1
+
+    rawString <- readLines(inFile$datapath, warn = FALSE)
+    correctedString <- gsub("\\\\n", "\n", rawString)
+    dataLines <- unlist(strsplit(correctedString, "\n"))
+
+    parsedData <- map_df(dataLines, parseLine)
+    storedData(parsedData) # Update stored data with parsed data
+  })
+}
+
+# Assuming you have a file upload module's UI definition
+fileUploadUI <- function(id) {
   ns <- NS(id)
   tagList(
-    numericInput(ns("port"), "Port for the Gateway Node", value = 5201),
-    textInput(ns("hostname"), "Hostname of the Bridge", value = "example.com"),
-    actionButton(ns("runTest"), "Run Test")
+    fileInput(ns('file1'), 'Choose text file', accept = c('text/plain', '.txt'))
   )
 }
 
-# Input Form Server
-inputForm <- function(input, output, session) {
-  return(reactive({
-    list(port = input$port, hostname = input$hostname, runTest = input$runTest)
-  }))
+```
+
+```{r}
+# Corrected module server function using namespaced IDs
+dataTableModule <- function(input, output, session, storedData) {
+  ns <- session$ns # This gets the namespace function for the current module instance
+  
+  output$table <- renderDT({
+    req(storedData())
+    datatable(storedData(), options = list(pageLength = 25, autoWidth = TRUE))
+  }, server = FALSE) # Ensure server-side processing is set correctly
 }
 
 
 ```
 
 ```{r}
-# Table Module UI
-tableModuleUI <- function(id) {
+filterUI <- function(id) {
   ns <- NS(id)
-  dataTableOutput(ns("table"))
+  tagList(
+    selectInput(ns("columnToFilter"), "Choose column to filter",
+                choices = c("IntervalStart", "IntervalEnd", "Transfer(Bits)", "Bitrate(Kbps)", "Retr", "Cwnd"), 
+                selected = "Bitrate(Kpbs)"),
+    numericInput(ns("minValue"), "Minimum Value", value = 0),
+    numericInput(ns("maxValue"), "Maximum Value", value = 10000000),
+    actionButton(ns("filterButton"), "Filter Data")
+  )
 }
 
-# Table Module Server
-tableModule <- function(input, output, session, data) {
-  output$table <- renderDataTable({
-    data()
-  }, options = list(pageLength = 5))
-}
+filterModule <- function(input, output, session, storedData) {
+  ns <- session$ns
 
+  # Dynamically update the column selection choices
+  output$dynamicColumnFilter <- renderUI({
+    selectInput(ns("columnToFilter"), "Choose column to filter",
+                choices = names(storedData()))
+  })
+
+  # Observe changes in selected column and update filter inputs accordingly
+  observe({
+    colType <- if (!is.null(storedData()) && input$columnToFilter %in% names(storedData())) {
+      class(storedData()[[input$columnToFilter]])[1]
+    } else {
+      NULL
+    }
+
+    # Update UI based on column type
+    output$filterInputs <- renderUI({
+      if (colType == "numeric") {
+        tagList(
+          numericInput(ns("minValue"), "Minimum Value", value = min(storedData()[[input$columnToFilter]], na.rm = TRUE)),
+          numericInput(ns("maxValue"), "Maximum Value", value = max(storedData()[[input$columnToFilter]], na.rm = TRUE))
+        )
+      } else if (colType == "factor" || colType == "character") {
+        selectInput(ns("categoricalFilter"), "Select Value", choices = unique(storedData()[[input$columnToFilter]]), multiple = TRUE)
+      } else {
+        p("Filtering not supported for this column type.")
+      }
+    })
+  })
+
+  # Apply filter logic
+  filteredData <- eventReactive(input$filterButton, {
+    if (!is.null(storedData())) {
+      df <- storedData()
+      colType <- class(df[[input$columnToFilter]])[1]
+      
+      if (colType == "numeric") {
+        df <- df %>%
+          filter(df[[input$columnToFilter]] >= input$minValue & df[[input$columnToFilter]] <= input$maxValue)
+      } else if (colType == "factor" || colType == "character") {
+        if (!is.null(input$categoricalFilter)) {
+          df <- df %>%
+            filter(df[[input$columnToFilter]] %in% input$categoricalFilter)
+        }
+      }
+      df
+    }
+  })
+
+  return(filteredData)
+}
 
 ```
 
 ```{r}
-# Plot Module UI
-plotModule <- function(input, output, session, data) {
-  output$plot <- renderPlot({
-    plot_data <- data()  # Get the reactive data
+# Visualization Module UI
+timeSeriesPlotUI <- function(id) {
+  ns <- NS(id)
+  tagList(
+    selectInput(ns("metricSelect"), "Select Metric to Plot",
+                choices = c("Transfer(KB)" = "Transfer(KB)", "Bitrate(Kbps)" = "Bitrate(Kbps)")),
+    plotOutput(ns("timeSeriesPlot"))
+  )
+}
 
-    # Ensure data is not empty and contains finite values
-    req(nrow(plot_data) > 0)
-    req(sum(is.finite(plot_data$interval)) > 0)
-    req(sum(is.finite(plot_data$bandwidth)) > 0)
-
-    # Filtering only finite values for safety
-    finite_indices <- is.finite(plot_data$interval) & is.finite(plot_data$bandwidth)
-    plot_data <- plot_data[finite_indices, ]
-
-    # Proceed to plot
-    if (nrow(plot_data) > 0) {
-      plot(plot_data$interval, plot_data$bandwidth, type = 'b', main = "Bandwidth Over Time",
-           xlab = "Interval", ylab = "Bandwidth (Mbps)")
-    } else {
-      # Optional: Handle the case where there's no valid data to plot
-      plot(1, type = "n", xlab = "", ylab = "", xlim = c(0, 1), ylim = c(0, 1))
-      text(0.5, 0.5, "No data to display")
-    }
+# Visualization Module Server
+timeSeriesPlotModule <- function(input, output, session, data) {
+  output$timeSeriesPlot <- renderPlot({
+    req(data())
+    selectedData <- data()
+    ggplot(selectedData, aes(x = IntervalStart, y = !!sym(input$metricSelect))) +
+      geom_line() +
+      labs(x = "Time (s)", y = input$metricSelect, title = paste("Time Series of", input$metricSelect)) +
+      theme_minimal()
   })
 }
 
 ```
 
 ```{r}
-library(shiny)
-library(DT)
+# Exit Module UI - This can be directly included in the main UI if needed
+exitButtonUI <- function(id) {
+  ns <- NS(id)
+  actionButton(ns("exitButton"), "Exit")
+}
 
-# Main UI
+# Exit Module Server
+exitModule <- function(input, output, session) {
+  observeEvent(input$exitButton, {
+    showModal(modalDialog(
+      title = "Confirm Exit",
+      "Do you want to exit the app? Please close the tab to exit completely.",
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton(session$ns("confirmExit"), "Exit", class = "btn-primary")
+      )
+    ))
+  })
+  
+  observeEvent(input$confirmExit, {
+    session$sendCustomMessage(type = "redirect", message = "about:blank")
+    removeModal()
+  })
+}
+
+```
+
+
+
+```{r}
 ui <- fluidPage(
-  titlePanel("Network Performance Test Interface with Modular Design"),
+  theme = shinytheme("cosmo"),
+  titlePanel("Iperf Data Processor"),
   sidebarLayout(
     sidebarPanel(
-      inputFormUI("inputForm")
+      fileUploadUI("fileUpload"),
+      exitButtonUI("exitButton") # Call the UI function for the exit module here
     ),
     mainPanel(
-      tableModuleUI("clientTable"),
-      tableModuleUI("serverTable"),
-      plotModuleUI("bandwidthPlot")
+      tabsetPanel(
+        tabPanel("Data View", DTOutput("dataTable-table")),
+        tabPanel("Filter Data", filterUI("filterData")),
+        tabPanel("Time Series Visualization", timeSeriesPlotUI("timeSeriesPlot")) # New tab for visualization
+      )
     )
   )
 )
 
-# Main Server
-server <- function(input, output, session) {
-  formData <- callModule(inputForm, "inputForm")
-  
-  # Initialize reactive values
-  dataValues <- reactiveValues(
-    clientData = data.frame(),
-    serverData = data.frame(),
-    bandwidthData = data.frame(interval = numeric(0), bandwidth = numeric(0))
+```
+
+```{r}
+scpTransferUI <- function(id) {
+  ns <- NS(id)
+  tagList(
+    fileInput(ns("file"), "Choose a file to transfer"),
+    textInput(ns("host"), "Destination Host", value = "192.168.1.5"),
+    textInput(ns("destPath"), "Destination Path", value = "/path/to/destination/"),
+    actionButton(ns("transfer"), "Transfer File"),
+    textOutput(ns("result")) # Output for transfer result or error message
   )
-  
-  observeEvent(formData()$runTest, {
-    # Simulate updating data upon form submission
-    # Replace these with actual data fetching based on formData
-    dataValues$clientData <- data.frame(Interval = 1:5, Transfer = runif(5, 100, 200), Bandwidth = runif(5, 10, 100))
-    dataValues$serverData <- data.frame(Interval = 1:5, Transfer = runif(5, 100, 200), Bandwidth = runif(5, 10, 100))
-    dataValues$bandwidthData <- data.frame(interval = 1:5, bandwidth = runif(5, 10, 100))
-  })
-  
-  # Call modules with reactive data
-  callModule(tableModule, "clientTable", data = reactive({dataValues$clientData}))
-  callModule(tableModule, "serverTable", data = reactive({dataValues$serverData}))
-  callModule(plotModule, "bandwidthPlot", data = reactive({dataValues$bandwidthData}))
 }
 
+scpTransferModule <- function(input, output, session) {
+  observeEvent(input$transfer, {
+    req(input$file)
+    # Sanitize and validate the host and destPath inputs here
+    host <- sanitizeHost(input$host) # You need to implement sanitizeHost
+    destPath <- sanitizePath(input$destPath) # You need to implement sanitizePath
+
+    # Construct the command
+    # Ensure the filePath is correctly obtained from the file input
+    filePath <- input$file$datapath
+    fileName <- input$file$name
+    cmd <- sprintf("scp %s %s@%s:%s",
+                   shQuote(filePath),
+                   shQuote("user"), # You might want to make the username a user input or a fixed value in your app
+                   shQuote(host),
+                   shQuote(destPath))
+    
+    # Execute the SCP command
+    # Consider using system2() for better security and control over the executed command
+    tryCatch({
+      result <- system(cmd, intern = TRUE)
+      output$result <- renderText("File transferred successfully.")
+    }, error = function(e) {
+      output$result <- renderText(sprintf("Error: %s", e$message))
+    })
+  })
+}
+
+```
+
+```{r}
+# Trials Spread Visualization Module UI
+ui <- fluidPage(
+  theme = shinytheme("cosmo"),
+  titlePanel("Iperf Data Processor"),
+  sidebarLayout(
+    sidebarPanel(
+      fileUploadUI("fileUpload"),
+      exitButtonUI("exitButton")
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Data View", DTOutput("dataTable")),
+        tabPanel("Filter Data", filterUI("filterData")),
+        tabPanel("Time Series Visualization", timeSeriesPlotUI("timeSeriesPlot")),
+        tabPanel("Trials Spread", trialsSpreadUI("trialsSpread"))
+      )
+    )
+  )
+)
+
+
+```
+
+
+```{r}
+server <- function(input, output, session) {
+  # Reactive value for storing parsed data
+  storedData <- reactiveVal()
+  
+  # Call the file upload module
+  callModule(fileUploadModule, "fileUpload", storedData = storedData)
+  
+  # Call the filtering module and use its output for the datatable and visualization
+  filteredData <- callModule(filterModule, "filterData", storedData = storedData)
+  
+  # Modify the dataTableModule call to use filteredData
+  callModule(dataTableModule, "dataTable", storedData = filteredData)
+  
+  # Call the time series plot module
+  callModule(timeSeriesPlotModule, "timeSeriesPlot", data = filteredData)
+  
+  # Call the trials spread visualization module
+  callModule(trialsSpreadModule, "trialsSpread", data = filteredData) # Assuming 'filteredData' is the reactive data source for plots
+  
+  callModule(scpTransferModule, "scpTransfer")
+  
+  # Call the exit module
+  callModule(exitModule, "exitButton")
+}
 
 
 ```
 
 ```{r}
-shinyApp(ui = ui, server = server)
+# Ensure Shiny app opens in a web browser
+options(shiny.launch.browser = TRUE)
+
+# Run the Shiny app
+shinyApp(ui, server)
+
 ```
-
-
-
