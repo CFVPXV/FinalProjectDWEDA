@@ -56,7 +56,7 @@ This repository contains the source code and documentation for a Shiny applicati
 
 ## Contributors
 - **Zhi Zheng**: [GitHub Profile](https://github.com/ZhiZheng0889)
-- **Nicholas Porter**: [GitHub Profile](https://github.com/yourpartnerusername)
+- **Nicholas Porter**: [GitHub Profile](https://github.com/CFVPXV)
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
