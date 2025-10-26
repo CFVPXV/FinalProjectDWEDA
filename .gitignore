@@ -1,0 +1,31 @@
+# R / RStudio
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+*.Rproj
+
+# knitr / R Markdown caches and artifacts
+*_cache/
+*.utf8.md
+*.knit.md
+*.nb.html
+Rplots.pdf
+
+# OS-specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Python (if used later)
+node_modules/
+__pycache__/
+*.pyc
+

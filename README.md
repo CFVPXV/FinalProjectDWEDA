@@ -27,8 +27,8 @@ This repository contains the source code and documentation for a Shiny applicati
 ## Installation
 1. Clone the repository:
     ```bash
-    git clone https://github.com/yourusername/network-performance-testing-shiny.git
-    cd network-performance-testing-shiny
+    git clone https://github.com/ZhiZheng0889/FinalProjectDWEDA.git
+    cd FinalProjectDWEDA
     ```
 2. Install required R packages:
     ```R
@@ -67,5 +67,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact
 For any questions or suggestions, please open an issue or contact us at [your.email@example.com].
+
+
+## Maintenance
+- See `CHANGELOG.md` for recent updates.
+- See `CONTRIBUTING.md` for how to propose changes.
 
 
